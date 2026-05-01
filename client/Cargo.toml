@@ -1,0 +1,21 @@
+[package]
+name = "client"
+version = "0.0.1"
+authors = ["Oleksandr Kovalov <oleksandr.kovalov.work@gmail.com>"]
+
+edition = "2024"
+rust-version = "1.95"
+
+categories = ["web-programming"]
+
+readme = "../README.md"
+license = "MIT"
+repository = "https://github.com/xairaven/XaiChat"
+
+[lints]
+workspace = true
+
+[dependencies]
+fern = "0.7.1"
+log = "0.4.29"
+thiserror = "2.0.18"
