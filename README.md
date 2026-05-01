@@ -1,1 +1,1 @@
-# XaiChat
+# xaichat
