@@ -4,7 +4,7 @@ use argon2::password_hash::phc::PasswordHash;
 use argon2::{Argon2, PasswordHasher, PasswordVerifier};
 use bytes::Bytes;
 use futures::{SinkExt, StreamExt};
-use protocol::{ClientMessage, ServerMessage, UserId};
+use protocol::{ClientMessage, ServerMessage, Target, UserId};
 use sqlx::PgPool;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::net::TcpStream;
@@ -52,7 +52,7 @@ impl ConnectionActor {
         // Notify Router that a new user has joined
         let connect_event = RouterEvent::UserConnected {
             user_id: user_id.clone(),
-            sender: tx_to_client,
+            sender: tx_to_client.clone(),
         };
 
         if router_tx.send(connect_event).await.is_err() {
@@ -74,7 +74,13 @@ impl ConnectionActor {
                     match result {
                         Some(Ok(bytes)) => {
                             if let Ok(client_msg) = postcard::from_bytes::<ClientMessage>(&bytes) {
-                                Self::handle_client_message(client_msg, &user_id, &router_tx).await;
+                                Self::handle_client_message(
+                                    client_msg,
+                                    &user_id,
+                                    &router_tx,
+                                    &pool,
+                                    &tx_to_client
+                                ).await;
                             }
                         }
                         // Connection closed or broken
@@ -101,9 +107,10 @@ impl ConnectionActor {
         Ok(())
     }
 
-    // Routes valid client messages to the central broker
+    // Routes valid client messages to the central broker or handles them directly
     async fn handle_client_message(
         msg: ClientMessage, user_id: &UserId, router_tx: &mpsc::Sender<RouterEvent>,
+        pool: &PgPool, tx_to_client: &mpsc::Sender<ServerMessage>,
     ) {
         match msg {
             ClientMessage::SendMessage { target, content } => {
@@ -127,8 +134,59 @@ impl ConnectionActor {
 
                 let _ = router_tx.send(route_event).await;
             },
-            // TODO: Other commands (Sync, CreateGroup) will be handled here
-            _ => todo!(),
+            ClientMessage::Sync { last_timestamp } => {
+                Self::sync_messages(user_id, last_timestamp, pool, tx_to_client).await;
+            },
+            // TODO: Other commands (CreateGroup) will be handled here
+            _ => {},
+        }
+    }
+
+    // Fetches missing messages from the database and sends them to the client
+    async fn sync_messages(
+        user_id: &UserId, last_timestamp: i64, pool: &PgPool,
+        tx_to_client: &mpsc::Sender<ServerMessage>,
+    ) {
+        // We select messages where the user is either the sender, the direct target,
+        // or it's a global broadcast message, strictly ordered by time
+        let query_result = sqlx::query!(
+            r#"
+            SELECT sender_id, target_user_id, is_broadcast, content_payload, created_at
+            FROM messages
+            WHERE created_at > $1
+              AND (target_user_id = $2 OR is_broadcast = true OR sender_id = $2)
+            ORDER BY created_at ASC
+            "#,
+            last_timestamp,
+            user_id.0
+        )
+        .fetch_all(pool)
+        .await;
+
+        if let Ok(records) = query_result {
+            for record in records {
+                if let Ok(payload) = postcard::from_bytes(&record.content_payload) {
+                    let is_broadcast = record.is_broadcast.unwrap_or(false);
+
+                    let target = if is_broadcast {
+                        Target::Broadcast
+                    } else if let Some(t_id) = record.target_user_id {
+                        Target::User(UserId(t_id))
+                    } else {
+                        continue;
+                    };
+
+                    let msg = ServerMessage::NewMessage {
+                        from: UserId(record.sender_id.unwrap_or(0)),
+                        target,
+                        content: payload,
+                        timestamp: record.created_at,
+                    };
+
+                    // Send directly to the connection actor's local channel
+                    let _ = tx_to_client.send(msg).await;
+                }
+            }
         }
     }
 
