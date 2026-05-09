@@ -1,14 +1,15 @@
+use crate::router::RouterEvent;
+use anyhow::{Context, Result};
+use argon2::password_hash::phc::PasswordHash;
+use argon2::{Argon2, PasswordHasher, PasswordVerifier};
 use bytes::Bytes;
 use futures::{SinkExt, StreamExt};
+use protocol::{ClientMessage, ServerMessage, UserId};
 use sqlx::PgPool;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::net::TcpStream;
 use tokio::sync::mpsc;
 use tokio_util::codec::{Framed, LengthDelimitedCodec};
-
-use crate::router::RouterEvent;
-use anyhow::Result;
-use protocol::{ClientMessage, ServerMessage, UserId};
 
 pub struct ConnectionActor;
 
@@ -26,19 +27,24 @@ impl ConnectionActor {
             _ => return Ok(()),
         };
 
-        let login_msg: ClientMessage = postcard::from_bytes(&first_frame)?;
+        let auth_msg: ClientMessage = postcard::from_bytes(&first_frame)
+            .context("Failed to parse initial auth message")?;
 
-        let (username, password) = match login_msg {
+        // Handle both Login and Register flows
+        let user_id = match auth_msg {
             ClientMessage::Login {
                 username,
                 password_plain,
-            } => (username, password_plain),
-            _ => return Ok(()),
+            } => Self::login_user(&username, &password_plain, &pool).await?,
+            ClientMessage::Register {
+                username,
+                password_plain,
+            } => Self::register_user(&username, &password_plain, &pool).await?,
+            _ => {
+                // Disconnect if the client tries to send messages before authenticating
+                return Err(anyhow::anyhow!("First message must be Login or Register"));
+            },
         };
-
-        // TODO: Placeholder for actual Argon2 hash verification against PostgreSQL
-        // For now, we simulate success and assign a mock ID
-        let user_id = Self::authenticate_user(&username, &password, &pool).await?;
 
         // Channel for the Router to send messages to this specific connection
         let (tx_to_client, mut rx_from_router) = mpsc::channel::<ServerMessage>(100);
@@ -82,6 +88,7 @@ impl ConnectionActor {
                             break;
                         }
                         // TODO
+                        todo!()
                     }
                 }
             }
@@ -121,14 +128,69 @@ impl ConnectionActor {
                 let _ = router_tx.send(route_event).await;
             },
             // TODO: Other commands (Sync, CreateGroup) will be handled here
-            _ => {},
+            _ => todo!(),
         }
     }
 
-    // TODO: Mock database function
-    async fn authenticate_user(
-        _user: &str, _pass: &str, _pool: &PgPool,
+    // Authenticates an existing user
+    async fn login_user(username: &str, password: &str, pool: &PgPool) -> Result<UserId> {
+        let record = sqlx::query!(
+            "SELECT id, password_hash FROM users WHERE username = $1",
+            username
+        )
+        .fetch_optional(pool)
+        .await?;
+
+        match record {
+            Some(user) => {
+                let parsed_hash = PasswordHash::new(&user.password_hash)
+                    .map_err(|e| anyhow::anyhow!("Invalid hash format: {}", e))?;
+
+                let is_valid = Argon2::default()
+                    .verify_password(password.as_bytes(), &parsed_hash)
+                    .is_ok();
+
+                if !is_valid {
+                    return Err(anyhow::anyhow!(
+                        "Invalid password for user: {}",
+                        username
+                    ));
+                }
+
+                println!("User logged in: {}", username);
+                Ok(UserId(user.id))
+            },
+            None => Err(anyhow::anyhow!("User not found: {}", username)),
+        }
+    }
+
+    // Registers a new user and hashes their password
+    async fn register_user(
+        username: &str, password: &str, pool: &PgPool,
     ) -> Result<UserId> {
-        Ok(UserId(1))
+        // First, check if user already exists to avoid database panic
+        let exists = sqlx::query!("SELECT id FROM users WHERE username = $1", username)
+            .fetch_optional(pool)
+            .await?;
+
+        if exists.is_some() {
+            return Err(anyhow::anyhow!("Username '{}' is already taken", username));
+        }
+
+        let password_hash = Argon2::default()
+            .hash_password(password.as_bytes())
+            .map_err(|e| anyhow::anyhow!("Failed to hash password: {}", e))?
+            .to_string();
+
+        let new_user = sqlx::query!(
+            "INSERT INTO users (username, password_hash) VALUES ($1, $2) RETURNING id",
+            username,
+            password_hash
+        )
+        .fetch_one(pool)
+        .await?;
+
+        println!("New user registered: {}", username);
+        Ok(UserId(new_user.id))
     }
 }
