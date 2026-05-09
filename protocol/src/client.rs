@@ -10,6 +10,11 @@ pub enum ClientMessage {
         password_plain: String,
     },
 
+    Register {
+        username: String,
+        password_plain: String,
+    },
+
     SendMessage {
         target: Target,
         content: Payload,
