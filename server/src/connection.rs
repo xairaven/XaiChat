@@ -261,18 +261,26 @@ impl ConnectionActor {
                 }
             },
             ClientMessage::FetchGroupInfo { group_id } => {
-                if let Ok(record) =
+                let record =
                     sqlx::query!("SELECT name FROM groups WHERE id = $1", group_id.0)
-                        .fetch_one(pool)
-                        .await
-                {
-                    let _ = tx_to_client
-                        .send(ServerMessage::GroupInfo {
-                            group_id,
-                            name: record.name,
-                        })
+                        .fetch_optional(pool)
                         .await;
-                }
+
+                let message: ServerMessage = match record {
+                    Ok(Some(rec)) => ServerMessage::GroupInfo {
+                        group_id,
+                        name: rec.name,
+                    },
+                    Ok(None) => {
+                        // Group is not found in the database
+                        ServerMessage::Error(ServerError::GroupNotFound(group_id))
+                    },
+                    Err(_) => {
+                        // Database error
+                        ServerMessage::Error(ServerError::InternalError)
+                    },
+                };
+                let _ = tx_to_client.send(message).await;
             },
         }
     }
