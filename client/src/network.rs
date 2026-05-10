@@ -119,10 +119,21 @@ impl NetworkManager {
                         Some(Ok(bytes)) => {
                             let server_msg: ServerMessage = postcard::from_bytes(&bytes)
                                 .map_err(NetworkError::Postcard)?;
+
+                            let is_error = matches!(server_msg, ServerMessage::Error(_));
+
                             let _ = server_tx.send(server_msg);
 
                             // WAKE UP EGUI TO DRAW THE NEW MESSAGE INSTANTLY
                             egui_ctx.request_repaint();
+
+                            // Check if the message is an error message. If it is,
+                            // we will exit the loop after processing it, because
+                            // the server will likely close the connection
+                            // immediately after sending an error (e.g., wrong password).
+                            if is_error {
+                                return Ok(());
+                            }
                         }
                         Some(Err(error)) => return Err(NetworkError::Bytes(error)),
                         None => return Err(NetworkError::ServerClosedConnection),
