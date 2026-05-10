@@ -59,6 +59,11 @@ impl ConnectionActor {
                 let error_msg = ServerMessage::Error(error.clone());
                 if let Ok(bytes) = postcard::to_stdvec(&error_msg) {
                     let _ = framed.send(Bytes::from(bytes)).await;
+
+                    let mut socket = framed.into_inner();
+                    use tokio::io::AsyncWriteExt;
+                    let _ = socket.shutdown().await;
+                    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
                 }
                 return Err(error.into());
             },
