@@ -302,6 +302,8 @@ impl ConnectionActor {
             .await;
 
         if let Ok(records) = query_result {
+            let mut batch = Vec::new();
+
             for record in records {
                 if let Ok(payload) = postcard::from_bytes(&record.content_payload) {
                     let is_broadcast = record.is_broadcast.unwrap_or(false);
@@ -323,8 +325,12 @@ impl ConnectionActor {
                         timestamp: record.created_at,
                     };
 
-                    let _ = tx_to_client.send(msg).await;
+                    batch.push(msg);
                 }
+            }
+
+            if !batch.is_empty() {
+                let _ = tx_to_client.send(ServerMessage::SyncBatch(batch)).await;
             }
         }
     }
