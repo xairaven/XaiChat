@@ -1,6 +1,6 @@
-use protocol::{ServerMessage, Target, UserId};
+use protocol::{GroupId, ServerMessage, Target, UserId};
 use sqlx::{Pool, Postgres};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use tokio::sync::mpsc;
 
 // Event sent from a Connection Actor to the Router Actor
@@ -9,17 +9,23 @@ pub enum RouterEvent {
     // New user successfully authenticated
     UserConnected {
         user_id: UserId,
+        groups: Vec<GroupId>,
         sender: mpsc::Sender<ServerMessage>,
     },
     // User dropped connection
     UserDisconnected {
         user_id: UserId,
     },
-    // User wants to route a message to someone or a group
+    // User wants to route a message
     RouteMessage {
         from: UserId,
         target: Target,
         message: ServerMessage,
+    },
+    // Dynamically subscribe to a group while online
+    UserJoinedGroup {
+        user_id: UserId,
+        group_id: GroupId,
     },
 }
 
@@ -27,8 +33,12 @@ pub enum RouterEvent {
 pub struct Router {
     // Channel to receive events from all active connections
     receiver: mpsc::Receiver<RouterEvent>,
-    // Registry of online users and their direct channels
-    active_connections: HashMap<UserId, mpsc::Sender<ServerMessage>>,
+
+    // Maps a user to their active TCP connection channel
+    sessions: HashMap<UserId, mpsc::Sender<ServerMessage>>,
+    // Pub/Sub: Maps a Group ID to a set of User IDs
+    group_subscriptions: HashMap<GroupId, HashSet<UserId>>,
+
     // Database pool
     pool: Pool<Postgres>,
 }
@@ -37,7 +47,8 @@ impl Router {
     pub fn new(receiver: mpsc::Receiver<RouterEvent>, pool: Pool<Postgres>) -> Self {
         Self {
             receiver,
-            active_connections: HashMap::new(),
+            sessions: HashMap::new(),
+            group_subscriptions: HashMap::new(),
             pool,
         }
     }
@@ -47,48 +58,67 @@ impl Router {
         // Process events sequentially as they arrive from connections
         while let Some(event) = self.receiver.recv().await {
             match event {
-                RouterEvent::UserConnected { user_id, sender } => {
-                    self.active_connections.insert(user_id.clone(), sender);
+                RouterEvent::UserConnected {
+                    user_id,
+                    groups,
+                    sender,
+                } => {
+                    self.sessions.insert(user_id.clone(), sender);
+
+                    // Subscribe user to all their groups in RAM
+                    for group_id in groups {
+                        self.group_subscriptions
+                            .entry(group_id)
+                            .or_default()
+                            .insert(user_id.clone());
+                    }
                     println!("User connected: {}", user_id);
                 },
                 RouterEvent::UserDisconnected { user_id } => {
-                    self.active_connections.remove(&user_id);
+                    // We only remove from active sessions.
+                    // Leaving them in `group_subscriptions` acts as an offline cache.
+                    self.sessions.remove(&user_id);
                     println!("User disconnected: {}", user_id);
+                },
+                RouterEvent::UserJoinedGroup { user_id, group_id } => {
+                    self.group_subscriptions
+                        .entry(group_id)
+                        .or_default()
+                        .insert(user_id);
                 },
                 RouterEvent::RouteMessage {
                     from,
                     target,
                     message,
                 } => {
+                    // Background non-blocking DB save
+                    self.save_message(&from, &target, &message);
+
+                    // Instant RAM-based routing
                     match target {
                         Target::User(ref target_user_id) => {
                             if let Some(client_channel) =
-                                self.active_connections.get(target_user_id)
+                                self.sessions.get(target_user_id)
                             {
-                                // Online: Send immediately
-                                let _ = client_channel.send(message.clone()).await;
-                            } else {
-                                // Offline: Just print log, DB logic handles saving below
-                                println!(
-                                    "User {} is offline. Message will be queued.",
-                                    target_user_id.0
-                                );
+                                let _ = client_channel.send(message).await;
                             }
-
-                            // DB INSERTS MUST NOT BLOCK THE ROUTER
-                            // Spawn a background task to save the message to Postgres
-                            self.save_message(&from, Some(target_user_id), &message);
                         },
                         Target::Broadcast => {
-                            // Send to everyone who is online
-                            for channel in self.active_connections.values() {
+                            for channel in self.sessions.values() {
                                 let _ = channel.send(message.clone()).await;
                             }
-                            self.save_message(&from, None, &message);
                         },
-                        Target::Group(_) => {
-                            // TODO: Group routing logic and DB saving
-                            println!("Group routing not yet implemented");
+                        Target::Group(ref group_id) => {
+                            if let Some(members) = self.group_subscriptions.get(group_id)
+                            {
+                                for uid in members {
+                                    // Only send if the user is currently online
+                                    if let Some(client_channel) = self.sessions.get(uid) {
+                                        let _ =
+                                            client_channel.send(message.clone()).await;
+                                    }
+                                }
+                            }
                         },
                     }
                 },
@@ -96,15 +126,20 @@ impl Router {
         }
     }
 
-    fn save_message(
-        &self, from: &UserId, target: Option<&UserId>, message: &ServerMessage,
-    ) {
-        // Save broadcast message to DB
+    fn save_message(&self, from: &UserId, target: &Target, message: &ServerMessage) {
         let pool = self.pool.clone();
         let msg_clone = message.clone();
         let from_id = from.0;
-        let target_id = target.map(|user_id| user_id.0);
-        let is_broadcast = target_id.is_none();
+
+        let mut target_user_id = None;
+        let mut target_group_id = None;
+        let mut is_broadcast = false;
+
+        match target {
+            Target::User(uid) => target_user_id = Some(uid.0),
+            Target::Group(gid) => target_group_id = Some(gid.0),
+            Target::Broadcast => is_broadcast = true,
+        }
 
         tokio::spawn(async move {
             if let ServerMessage::NewMessage {
@@ -113,14 +148,10 @@ impl Router {
                 && let Ok(payload_bytes) = postcard::to_stdvec(&content)
             {
                 let _ = sqlx::query!(
-                        "INSERT INTO messages (sender_id, target_user_id, is_broadcast, content_payload, created_at) \
-                        VALUES ($1, $2, $3, $4, $5)",
-                        from_id,
-                        target_id,
-                        is_broadcast,
-                        payload_bytes,
-                        timestamp
-                    )
+                    "INSERT INTO messages (sender_id, target_user_id, target_group_id, is_broadcast, content_payload, created_at) \
+                    VALUES ($1, $2, $3, $4, $5, $6)",
+                    from_id, target_user_id, target_group_id, is_broadcast, payload_bytes, timestamp
+                )
                     .execute(&pool)
                     .await;
             }
