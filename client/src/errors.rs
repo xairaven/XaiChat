@@ -1,5 +1,6 @@
 use crate::config::ConfigError;
 use crate::logs::LogsError;
+use crate::network::NetworkError;
 use crate::ui::GraphicsBackendError;
 use thiserror::Error;
 
@@ -13,4 +14,7 @@ pub enum ClientError {
 
     #[error("Logger. {0}")]
     Logs(#[from] LogsError),
+
+    #[error("Network. {0}")]
+    Network(#[from] NetworkError),
 }

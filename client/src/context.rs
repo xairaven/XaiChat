@@ -1,7 +1,9 @@
 use crate::config::Config;
 use crate::errors::ClientError;
+use crate::network::NetworkCommand;
 use crossbeam::channel::{Receiver, Sender};
-use protocol::{ClientMessage, ServerMessage, UserId};
+use protocol::{ServerMessage, UserId};
+use tokio::sync::mpsc::UnboundedSender;
 
 #[derive(Debug)]
 pub struct Context {
@@ -13,7 +15,7 @@ pub struct Context {
     pub errors_rx: Receiver<ClientError>,
 
     // Channel: UI sending message -> Network thread reads them and send to the server
-    pub network_tx: Sender<ClientMessage>,
+    pub network_tx: UnboundedSender<NetworkCommand>,
 
     // Channel: Network thread reads TCP -> sending messages here -> UI draws
     pub server_rx: Receiver<ServerMessage>,
@@ -21,7 +23,7 @@ pub struct Context {
 
 impl Context {
     pub fn new(
-        config: Config, network_tx: Sender<ClientMessage>,
+        config: Config, network_tx: UnboundedSender<NetworkCommand>,
         server_rx: Receiver<ServerMessage>,
     ) -> Self {
         let (errors_tx, errors_rx) = crossbeam::channel::unbounded();

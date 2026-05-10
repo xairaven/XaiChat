@@ -1,5 +1,6 @@
 use crate::config::Config;
 use crate::context::Context;
+use crate::network::NetworkManager;
 use crate::ui::modals::ModalsHandler;
 use crate::ui::workspace::Workspace;
 use eframe::Frame;
@@ -17,12 +18,19 @@ impl AppCreator {
         Self::set_fonts(cc);
         Self::set_theme(cc, &config);
 
-        // TODO: There we will run network thread
-        let (network_tx, _network_rx) = crossbeam::channel::unbounded();
-        let (_server_tx, server_rx) = crossbeam::channel::unbounded();
+        let (network_tx, network_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (server_tx, server_rx) = crossbeam::channel::unbounded();
 
         let context = Context::new(config, network_tx, server_rx);
         let workspace = Workspace::new(&context);
+
+        NetworkManager {
+            network_rx,
+            server_tx,
+            error_tx: context.errors_tx.clone(),
+            egui_ctx: cc.egui_ctx.clone(),
+        }
+        .start();
 
         Self {
             context,
