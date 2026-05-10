@@ -1,21 +1,49 @@
 use crate::config::Config;
 use crate::errors::ClientError;
 use crossbeam::channel::{Receiver, Sender};
+use protocol::{ClientMessage, ServerMessage, UserId};
 
 #[derive(Debug)]
 pub struct Context {
-    // Channels
+    pub config: Config,
+    pub state: AppState,
+
+    // Channels for local UI errors
     pub errors_tx: Sender<ClientError>,
     pub errors_rx: Receiver<ClientError>,
+
+    // Channel: UI sending message -> Network thread reads them and send to the server
+    pub network_tx: Sender<ClientMessage>,
+
+    // Channel: Network thread reads TCP -> sending messages here -> UI draws
+    pub server_rx: Receiver<ServerMessage>,
 }
 
 impl Context {
-    pub fn new(_config: Config) -> Self {
+    pub fn new(
+        config: Config, network_tx: Sender<ClientMessage>,
+        server_rx: Receiver<ServerMessage>,
+    ) -> Self {
         let (errors_tx, errors_rx) = crossbeam::channel::unbounded();
 
         Self {
+            config,
+            state: AppState::default(),
             errors_tx,
             errors_rx,
+            network_tx,
+            server_rx,
         }
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Default)]
+pub enum AppState {
+    /// Server address, login and password input or registering
+    #[default]
+    Auth,
+    /// Waiting for server answer
+    Connecting,
+    /// Main chat window
+    Chat { my_user_id: UserId },
 }

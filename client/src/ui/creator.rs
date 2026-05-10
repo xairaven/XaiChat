@@ -17,7 +17,11 @@ impl AppCreator {
         Self::set_fonts(cc);
         Self::set_theme(cc, &config);
 
-        let context = Context::new(config);
+        // TODO: There we will run network thread
+        let (network_tx, _network_rx) = crossbeam::channel::unbounded();
+        let (_server_tx, server_rx) = crossbeam::channel::unbounded();
+
+        let context = Context::new(config, network_tx, server_rx);
         let workspace = Workspace::new(&context);
 
         Self {

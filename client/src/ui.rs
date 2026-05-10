@@ -65,3 +65,9 @@ pub enum GraphicsBackendError {
 pub mod creator;
 pub mod modals;
 pub mod workspace;
+
+pub mod pages {
+    pub mod auth;
+    pub mod chat;
+    pub mod connecting;
+}
