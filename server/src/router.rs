@@ -72,12 +72,30 @@ impl Router {
                             .or_default()
                             .insert(user_id.clone());
                     }
+
+                    let presence_msg = ServerMessage::Presence {
+                        user_id: user_id.clone(),
+                        online: true,
+                    };
+                    for channel in self.sessions.values() {
+                        let _ = channel.send(presence_msg.clone()).await;
+                    }
+
                     println!("User connected: {}", user_id);
                 },
                 RouterEvent::UserDisconnected { user_id } => {
                     // We only remove from active sessions.
                     // Leaving them in `group_subscriptions` acts as an offline cache.
                     self.sessions.remove(&user_id);
+
+                    let presence_msg = ServerMessage::Presence {
+                        user_id: user_id.clone(),
+                        online: false,
+                    };
+                    for channel in self.sessions.values() {
+                        let _ = channel.send(presence_msg.clone()).await;
+                    }
+
                     println!("User disconnected: {}", user_id);
                 },
                 RouterEvent::UserJoinedGroup { user_id, group_id } => {
