@@ -1,9 +1,10 @@
 use crate::context::{AppState, Context};
 use crate::errors::ClientError;
-use crate::network::NetworkError;
+use crate::network::{NetworkCommand, NetworkError};
 use crate::ui::pages::auth::AuthPage;
 use crate::ui::pages::chat::ChatPage;
 use crate::ui::pages::connecting::ConnectingPage;
+use protocol::{ClientMessage, ServerMessage};
 
 #[derive(Debug)]
 pub struct Workspace {
@@ -35,12 +36,16 @@ impl Workspace {
         // Read all pending messages from the server
         while let Ok(msg) = context.server_rx.try_recv() {
             match msg {
-                protocol::ServerMessage::AuthSuccess { user_id } => {
+                ServerMessage::AuthSuccess { user_id } => {
                     context.state = AppState::Chat {
                         my_user_id: user_id,
                     };
+
+                    let _ = context.network_tx.send(NetworkCommand::Send(
+                        ClientMessage::Sync { last_timestamp: 0 },
+                    ));
                 },
-                protocol::ServerMessage::Error(error) => {
+                ServerMessage::Error(error) => {
                     // Show error modal and go back to auth screen
                     let error = NetworkError::Server(error);
                     let _ = context.errors_tx.send(ClientError::Network(error));
