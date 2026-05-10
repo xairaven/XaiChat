@@ -9,6 +9,9 @@ pub enum ServerMessage {
     /// Successful auth. Server returning its user ID
     AuthSuccess { user_id: UserId },
 
+    /// Sent immediately after AuthSuccess to provide the client with its current groups
+    GroupsList(Vec<(GroupId, String)>),
+
     /// Universal error
     Error(ServerError),
 
@@ -60,6 +63,12 @@ pub enum ServerError {
 
     #[error("Wrong request format: {0}")]
     BadRequest(String),
+
+    #[error("Already authenticated.")]
+    AlreadyAuthenticated,
+
+    #[error("First message must be Login or Register.")]
+    FirstMessageNotAuth,
 
     #[error("Server internal error.")]
     InternalError,
