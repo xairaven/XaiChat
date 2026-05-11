@@ -1,27 +1,37 @@
 use crate::context::Context;
 use crate::ui::modals::error::ErrorModal;
 
-#[derive(Debug, Default)]
+#[derive(Default)]
 pub struct ModalsHandler {
-    errors: Vec<ErrorModal>,
+    modals: Vec<Box<dyn Modal>>,
 }
 
 impl ModalsHandler {
-    pub fn handle_errors(&mut self, ui: &mut egui::Ui, ctx: &Context) {
+    pub fn handle(&mut self, ui: &mut egui::Ui, ctx: &Context) {
+        self.receive_errors(ctx);
+        self.receive_modals(ctx);
+        self.show_opened_modals(ui, ctx);
+    }
+
+    fn receive_modals(&mut self, ctx: &Context) {
+        // Getting modals from the receiver.
+        if let Ok(modal) = ctx.modals_rx.try_recv() {
+            self.modals.push(modal);
+        }
+    }
+
+    fn receive_errors(&mut self, ctx: &Context) {
         // Getting errors from the receiver (in context).
         if let Ok(error) = ctx.errors_rx.try_recv() {
             let modal = ErrorModal::new(error);
-            self.errors.push(modal);
+            self.modals.push(Box::new(modal));
         }
-
-        // Showing modals.
-        self.show_opened_modals(ui, ctx);
     }
 
     fn show_opened_modals(&mut self, ui: &mut egui::Ui, ctx: &Context) {
         let mut closed_modals: Vec<usize> = vec![];
 
-        for (index, modal) in self.errors.iter_mut().enumerate() {
+        for (index, modal) in self.modals.iter_mut().enumerate() {
             modal.show(ui, ctx);
 
             if modal.is_closed() {
@@ -30,7 +40,7 @@ impl ModalsHandler {
         }
 
         closed_modals.iter().for_each(|index| {
-            self.errors.remove(*index);
+            self.modals.remove(*index);
         });
     }
 }
@@ -98,3 +108,4 @@ pub trait Modal: Send + Sync {
 }
 
 pub mod error;
+pub mod group;

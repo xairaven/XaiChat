@@ -55,7 +55,7 @@ impl eframe::App for AppCreator {
         CentralPanel::default().show_inside(ui, |ui| {
             self.workspace.show(ui, &mut self.context);
 
-            self.modals_handler.handle_errors(ui, &self.context);
+            self.modals_handler.handle(ui, &self.context);
         });
     }
 }

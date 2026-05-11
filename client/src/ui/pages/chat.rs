@@ -1,5 +1,6 @@
 use crate::context::Context;
 use crate::network::NetworkCommand;
+use crate::ui::modals::group::{CreateGroupModal, InviteToGroupModal};
 use egui::{Color32, Panel, ScrollArea, TextEdit};
 use protocol::{ClientMessage, GroupId, Payload, ServerMessage, Target, UserId};
 use std::collections::HashMap;
@@ -29,37 +30,81 @@ impl ChatPage {
     pub fn show(&mut self, ui: &mut egui::Ui, context: &mut Context) {
         // Left panel: Chats list
         Panel::left("CHAT_SIDEBAR")
-            .resizable(true)
+            .resizable(false)
             .default_size(200.0)
             .show_inside(ui, |ui| {
                 ui.heading("💬 XaiChat");
                 ui.separator();
 
-                ui.label(egui::RichText::new("My Groups:").strong());
-                ui.add_space(5.0);
-
-                ScrollArea::vertical().show(ui, |ui| {
-                    for (group_id, name) in &self.groups {
-                        let target = Target::Group(group_id.clone());
-                        let is_selected = self.active_chat.as_ref() == Some(&target);
-
-                        if ui
-                            .selectable_label(is_selected, format!("👥 {}", name))
-                            .clicked()
-                        {
-                            self.active_chat = Some(target);
-                        }
-                    }
-                });
-
-                ui.add_space(20.0);
-                ui.separator();
-
-                // Broadcast
+                // Broadcast chat
                 let is_broadcast = self.active_chat == Some(Target::Broadcast);
                 if ui.selectable_label(is_broadcast, "🌐 Broadcast").clicked() {
                     self.active_chat = Some(Target::Broadcast);
                 }
+                ui.separator();
+
+                // Groups
+                ui.horizontal(|ui| {
+                    ui.label(egui::RichText::new("My Groups:").strong());
+                    if ui.button("➕").on_hover_text("Create new group").clicked() {
+                        let modal = CreateGroupModal::default();
+                        let _ = context.modals_tx.try_send(Box::new(modal));
+                    }
+                });
+
+                ScrollArea::vertical()
+                    .id_salt("groups_scroll")
+                    .max_height(200.0)
+                    .show(ui, |ui| {
+                        for (group_id, name) in &self.groups {
+                            let target = Target::Group(group_id.clone());
+                            let is_selected = self.active_chat.as_ref() == Some(&target);
+
+                            if ui
+                                .selectable_label(is_selected, format!("👥 {}", name))
+                                .clicked()
+                            {
+                                self.active_chat = Some(target);
+                            }
+                        }
+                    });
+                ui.separator();
+
+                // Private messages, who is online
+                ui.label(egui::RichText::new("Online:").strong());
+                ScrollArea::vertical()
+                    .id_salt("users_scroll")
+                    .show(ui, |ui| {
+                        for (id, is_online) in &self.presence {
+                            if *is_online {
+                                // Do not show myself in online list
+                                if let crate::context::AppState::Chat { my_user_id } =
+                                    &context.state
+                                    && id == my_user_id
+                                {
+                                    continue;
+                                }
+
+                                let target = Target::User(id.clone());
+                                let is_selected =
+                                    self.active_chat.as_ref() == Some(&target);
+
+                                if ui
+                                    .selectable_label(
+                                        is_selected,
+                                        format!(
+                                            "{} User {}",
+                                            egui_phosphor::regular::FINN_THE_HUMAN,
+                                            id.0
+                                        ),
+                                    )
+                                    .clicked()
+                                {
+                                    self.active_chat = Some(target);
+                                }
+                            }
+                        }
+                    });
             });
 
         // We check if any chat is selected. If not - we draw a placeholder.
@@ -117,13 +162,28 @@ impl ChatPage {
                 ui.add_space(8.0);
             });
 
-        // Central panel: Message history
+        // History and handling
         egui::CentralPanel::default().show_inside(ui, |ui| {
-            // Heading of opened chat
-            ui.heading(match &active_target {
-                Target::Group(_) => "👥 Group chat",
-                Target::Broadcast => "🌐 Broadcast chat",
-                Target::User(_) => "👤 Private chat",
+            ui.horizontal(|ui| {
+                ui.heading(match &active_target {
+                    Target::Group(_) => "👥 Group Chat".to_string(),
+                    Target::Broadcast => "🌐 Broadcast Chat".to_string(),
+                    Target::User(id) => format!("👤 Chat with user {}", id.0),
+                });
+
+                // If it is a group, draw "Invite" button
+                if let Target::Group(_) = active_target {
+                    ui.with_layout(
+                        egui::Layout::right_to_left(egui::Align::Center),
+                        |ui| {
+                            if ui.button("Invite by ID").clicked() {
+                                let modal =
+                                    InviteToGroupModal::new(self.active_chat.clone());
+                                let _ = context.modals_tx.try_send(Box::new(modal));
+                            }
+                        },
+                    );
+                }
             });
             ui.separator();
 
@@ -144,11 +204,33 @@ impl ChatPage {
 
                                 // Draw message
                                 ui.horizontal(|ui| {
-                                    ui.label(
-                                        egui::RichText::new(format!("ID {}:", from.0))
+                                    // Is this our message?
+                                    let is_my_msg =
+                                        if let crate::context::AppState::Chat {
+                                            my_user_id,
+                                        } = &context.state
+                                        {
+                                            from == my_user_id
+                                        } else {
+                                            false
+                                        };
+
+                                    if is_my_msg {
+                                        ui.label(
+                                            egui::RichText::new("Me:")
+                                                .color(Color32::GREEN)
+                                                .strong(),
+                                        );
+                                    } else {
+                                        ui.label(
+                                            egui::RichText::new(format!(
+                                                "User {}:",
+                                                from.0
+                                            ))
                                             .color(Color32::LIGHT_BLUE)
                                             .strong(),
-                                    );
+                                        );
+                                    }
                                     ui.label(text_content);
                                 });
                             }
