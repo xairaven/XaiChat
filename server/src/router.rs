@@ -63,7 +63,7 @@ impl Router {
                     groups,
                     sender,
                 } => {
-                    self.sessions.insert(user_id.clone(), sender);
+                    self.sessions.insert(user_id.clone(), sender.clone());
 
                     // Subscribe user to all their groups in RAM
                     for group_id in groups {
@@ -73,12 +73,26 @@ impl Router {
                             .insert(user_id.clone());
                     }
 
+                    // Tell others that we are online
                     let presence_msg = ServerMessage::Presence {
                         user_id: user_id.clone(),
                         online: true,
                     };
-                    for channel in self.sessions.values() {
-                        let _ = channel.send(presence_msg.clone()).await;
+                    for (uid, channel) in &self.sessions {
+                        if uid != &user_id {
+                            let _ = channel.send(presence_msg.clone()).await;
+                        }
+                    }
+
+                    // Tell us about everyone who was already online before us
+                    for uid in self.sessions.keys() {
+                        if uid != &user_id {
+                            let presence_msg = ServerMessage::Presence {
+                                user_id: uid.clone(),
+                                online: true,
+                            };
+                            let _ = sender.send(presence_msg).await;
+                        }
                     }
 
                     println!("User connected: {}", user_id);

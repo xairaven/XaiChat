@@ -116,6 +116,21 @@ impl ConnectionActor {
         let serialized_groups = postcard::to_stdvec(&sync_groups_msg)?;
         framed.send(Bytes::from(serialized_groups)).await?;
 
+        // Sync contact book (all registered users)
+        let users_records = sqlx::query!("SELECT id, username FROM users")
+            .fetch_all(&pool)
+            .await
+            .unwrap_or_default();
+
+        let users_list = users_records
+            .into_iter()
+            .map(|r| (UserId(r.id), r.username))
+            .collect();
+
+        let sync_users_msg = ServerMessage::UsersList(users_list);
+        let serialized_users = postcard::to_stdvec(&sync_users_msg)?;
+        framed.send(Bytes::from(serialized_users)).await?;
+
         // Main event loop
         loop {
             tokio::select! {
@@ -162,8 +177,7 @@ impl ConnectionActor {
         match msg {
             ClientMessage::Login { .. } | ClientMessage::Register { .. } => {
                 // User is already authenticated. Sending this again is a protocol violation.
-                let err =
-                    ServerMessage::Error(protocol::ServerError::AlreadyAuthenticated);
+                let err = ServerMessage::Error(ServerError::AlreadyAuthenticated);
                 let _ = tx_to_client.send(err).await;
             },
 
