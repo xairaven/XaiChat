@@ -1,4 +1,4 @@
-use crate::context::Context;
+use crate::context::{AppState, Context};
 use crate::network::NetworkCommand;
 use crate::ui::modals::group::{CreateGroupModal, InviteToGroupModal};
 use egui::{Color32, Panel, ScrollArea, TextEdit};
@@ -18,6 +18,9 @@ pub struct ChatPage {
 
     // Who is online now
     pub presence: HashMap<UserId, bool>,
+
+    // Mapping ID -> Nickname
+    pub address_book: HashMap<UserId, String>,
 
     // In what chat we are reading/writing now (If None - none is open)
     pub active_chat: Option<Target>,
@@ -75,33 +78,30 @@ impl ChatPage {
                 ScrollArea::vertical()
                     .id_salt("users_scroll")
                     .show(ui, |ui| {
-                        for (id, is_online) in &self.presence {
-                            if *is_online {
-                                // Do not show myself in online list
-                                if let crate::context::AppState::Chat { my_user_id } =
-                                    &context.state
-                                    && id == my_user_id
-                                {
-                                    continue;
-                                }
+                        for (id, username) in &self.address_book {
+                            // Do not show myself in online list
+                            if let AppState::Chat { my_user_id } = &context.state
+                                && id == my_user_id
+                            {
+                                continue;
+                            }
 
-                                let target = Target::User(id.clone());
-                                let is_selected =
-                                    self.active_chat.as_ref() == Some(&target);
+                            // Check online state
+                            let is_online =
+                                self.presence.get(id).copied().unwrap_or(false);
+                            let status_icon = if is_online { "🟢" } else { "⚪" };
 
-                                if ui
-                                    .selectable_label(
-                                        is_selected,
-                                        format!(
-                                            "{} User {}",
-                                            egui_phosphor::regular::FINN_THE_HUMAN,
-                                            id.0
-                                        ),
-                                    )
-                                    .clicked()
-                                {
-                                    self.active_chat = Some(target);
-                                }
+                            let target = Target::User(id.clone());
+                            let is_selected = self.active_chat.as_ref() == Some(&target);
+
+                            if ui
+                                .selectable_label(
+                                    is_selected,
+                                    format!("{} {}", status_icon, username),
+                                )
+                                .clicked()
+                            {
+                                self.active_chat = Some(target);
                             }
                         }
                     });
@@ -168,7 +168,14 @@ impl ChatPage {
                 ui.heading(match &active_target {
                     Target::Group(_) => "👥 Group Chat".to_string(),
                     Target::Broadcast => "🌐 Broadcast Chat".to_string(),
-                    Target::User(id) => format!("👤 Chat with user {}", id.0),
+                    Target::User(id) => {
+                        let chat_with_who = self
+                            .address_book
+                            .get(id)
+                            .cloned()
+                            .unwrap_or_else(|| format!("ID {}", id.0));
+                        format!("👤 Chat with user: {}", chat_with_who)
+                    },
                 });
 
                 // If it is a group, draw "Invite" button
@@ -176,9 +183,11 @@ impl ChatPage {
                     ui.with_layout(
                         egui::Layout::right_to_left(egui::Align::Center),
                         |ui| {
-                            if ui.button("Invite by ID").clicked() {
-                                let modal =
-                                    InviteToGroupModal::new(self.active_chat.clone());
+                            if ui.button("Invite").clicked() {
+                                let modal = InviteToGroupModal::new(
+                                    self.active_chat.clone(),
+                                    self.address_book.clone(),
+                                );
                                 let _ = context.modals_tx.try_send(Box::new(modal));
                             }
                         },
@@ -205,15 +214,13 @@ impl ChatPage {
                                 // Draw message
                                 ui.horizontal(|ui| {
                                     // Is this our message?
-                                    let is_my_msg =
-                                        if let crate::context::AppState::Chat {
-                                            my_user_id,
-                                        } = &context.state
-                                        {
-                                            from == my_user_id
-                                        } else {
-                                            false
-                                        };
+                                    let is_my_msg = if let AppState::Chat { my_user_id } =
+                                        &context.state
+                                    {
+                                        from == my_user_id
+                                    } else {
+                                        false
+                                    };
 
                                     if is_my_msg {
                                         ui.label(
@@ -222,10 +229,15 @@ impl ChatPage {
                                                 .strong(),
                                         );
                                     } else {
+                                        let sender_name = self
+                                            .address_book
+                                            .get(from)
+                                            .cloned()
+                                            .unwrap_or_else(|| format!("ID {}", from.0));
                                         ui.label(
                                             egui::RichText::new(format!(
-                                                "User {}:",
-                                                from.0
+                                                "{}:",
+                                                sender_name
                                             ))
                                             .color(Color32::LIGHT_BLUE)
                                             .strong(),
@@ -246,6 +258,11 @@ impl ChatPage {
 
     pub fn handle_server_message(&mut self, msg: ServerMessage, my_user_id: &UserId) {
         match msg {
+            ServerMessage::UsersList(list) => {
+                for (id, name) in list {
+                    self.address_book.insert(id, name);
+                }
+            },
             ServerMessage::GroupsList(list) => {
                 self.groups = list;
             },
