@@ -42,6 +42,9 @@ pub enum ServerMessage {
 
     /// Group metadata
     GroupInfo { group_id: GroupId, name: String },
+
+    /// Sending immediately after login (Contact book)
+    UsersList(Vec<(UserId, String)>),
 }
 
 #[derive(Error, Serialize, Deserialize, Debug, Clone)]
