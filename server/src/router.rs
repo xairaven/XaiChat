@@ -129,10 +129,18 @@ impl Router {
                     // Instant RAM-based routing
                     match target {
                         Target::User(ref target_user_id) => {
+                            // Send message to the recipient if they are online
                             if let Some(client_channel) =
                                 self.sessions.get(target_user_id)
                             {
-                                let _ = client_channel.send(message).await;
+                                let _ = client_channel.send(message.clone()).await;
+                            }
+
+                            // Echo the message back to the sender so their UI updates
+                            if from != *target_user_id
+                                && let Some(sender_channel) = self.sessions.get(&from)
+                            {
+                                let _ = sender_channel.send(message.clone()).await;
                             }
                         },
                         Target::Broadcast => {
