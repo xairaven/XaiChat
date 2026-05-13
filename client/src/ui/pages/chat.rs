@@ -126,6 +126,30 @@ impl ChatPage {
             .show_inside(ui, |ui| {
                 ui.add_space(8.0);
                 ui.horizontal(|ui| {
+                    // File input button
+                    if ui
+                        .button(egui_phosphor::regular::PAPERCLIP)
+                        .on_hover_text("Send File")
+                        .clicked()
+                        && let Some(path) = rfd::FileDialog::new().pick_file()
+                    {
+                        // Reading bytes into file
+                        if let Ok(data) = std::fs::read(&path) {
+                            let filename = path
+                                .file_name()
+                                .unwrap_or_default()
+                                .to_string_lossy()
+                                .to_string();
+                            let payload = Payload::File { filename, data };
+
+                            let msg = ClientMessage::SendMessage {
+                                target: active_target.clone(),
+                                content: payload,
+                            };
+                            let _ = context.network_tx.send(NetworkCommand::Send(msg));
+                        }
+                    }
+
                     // Text input field
                     let response = ui.add_sized(
                         [ui.available_width() - 85.0, 30.0],
