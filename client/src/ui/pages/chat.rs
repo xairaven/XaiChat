@@ -93,7 +93,7 @@ impl ChatPage {
                             // Check online state
                             let is_online =
                                 self.presence.get(id).copied().unwrap_or(false);
-                            let status_icon = if is_online { "🟢" } else { "⚪" };
+                            let status_icon = if is_online { "*" } else { "x" };
 
                             let target = Target::User(id.clone());
                             let is_selected = self.active_chat.as_ref() == Some(&target);
