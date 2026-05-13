@@ -228,15 +228,8 @@ impl ChatPage {
                     if let Some(history) = self.messages.get(&active_target) {
                         for msg in history {
                             if let ServerMessage::NewMessage { from, content, .. } = msg {
-                                let text_content = match content {
-                                    Payload::Text(text) => text.clone(),
-                                    Payload::File { filename, .. } => {
-                                        format!("📎 File: {}", filename)
-                                    },
-                                };
-
                                 // Draw message
-                                ui.horizontal(|ui| {
+                                ui.horizontal_wrapped(|ui| {
                                     // Is this our message?
                                     let is_my_msg = if let AppState::Chat { my_user_id } =
                                         &context.state
@@ -267,7 +260,41 @@ impl ChatPage {
                                             .strong(),
                                         );
                                     }
-                                    ui.label(text_content);
+
+                                    // Message content!
+                                    match content {
+                                        Payload::Text(text) => {
+                                            // Simple text parser (Bold text)
+                                            let mut is_bold = false;
+                                            for part in text.split("**") {
+                                                if is_bold {
+                                                    ui.label(
+                                                        egui::RichText::new(part)
+                                                            .strong(),
+                                                    );
+                                                } else {
+                                                    ui.label(part);
+                                                }
+                                                is_bold = !is_bold;
+                                            }
+                                        },
+                                        Payload::File { filename, data } => {
+                                            // Download file button
+                                            if ui
+                                                .button(format!(
+                                                    "💾 Download: {}",
+                                                    filename
+                                                ))
+                                                .clicked()
+                                                && let Some(path) = rfd::FileDialog::new()
+                                                    .set_file_name(filename.clone())
+                                                    .save_file()
+                                            {
+                                                // Save file to disk
+                                                let _ = std::fs::write(path, data);
+                                            }
+                                        },
+                                    }
                                 });
                             }
                         }
