@@ -1,11 +1,12 @@
 use crate::context::{AppState, Context};
 use crate::network::NetworkCommand;
 use crate::ui::modals::group::{CreateGroupModal, InviteToGroupModal};
-use egui::{Color32, Panel, ScrollArea, TextEdit};
+use egui::{Color32, ColorImage, Panel, ScrollArea, TextEdit, TextureHandle};
 use protocol::{ClientMessage, GroupId, Payload, ServerMessage, Target, UserId};
+use std::cell::RefCell;
 use std::collections::HashMap;
 
-#[derive(Debug, Default)]
+#[derive(Default)]
 pub struct ChatPage {
     // Group list where we are (ID, Label)
     pub groups: Vec<(GroupId, String)>,
@@ -27,6 +28,9 @@ pub struct ChatPage {
 
     // String for text input of new message
     pub draft_message: String,
+
+    // Cache for inline images. Key is combination of file name & size (or just title)
+    pub texture_cache: RefCell<HashMap<String, TextureHandle>>,
 }
 
 impl ChatPage {
@@ -227,7 +231,13 @@ impl ChatPage {
                 .show(ui, |ui| {
                     if let Some(history) = self.messages.get(&active_target) {
                         for msg in history {
-                            if let ServerMessage::NewMessage { from, content, .. } = msg {
+                            if let ServerMessage::NewMessage {
+                                from,
+                                content,
+                                timestamp,
+                                ..
+                            } = msg
+                            {
                                 // Draw message
                                 ui.horizontal_wrapped(|ui| {
                                     // Is this our message?
@@ -264,35 +274,51 @@ impl ChatPage {
                                     // Message content!
                                     match content {
                                         Payload::Text(text) => {
-                                            // Simple text parser (Bold text)
-                                            let mut is_bold = false;
-                                            for part in text.split("**") {
-                                                if is_bold {
-                                                    ui.label(
-                                                        egui::RichText::new(part)
-                                                            .strong(),
-                                                    );
-                                                } else {
-                                                    ui.label(part);
-                                                }
-                                                is_bold = !is_bold;
-                                            }
+                                            self.render_formatted_text(ui, text)
                                         },
                                         Payload::File { filename, data } => {
-                                            // Download file button
-                                            if ui
-                                                .button(format!(
-                                                    "💾 Download: {}",
-                                                    filename
-                                                ))
-                                                .clicked()
-                                                && let Some(path) = rfd::FileDialog::new()
-                                                    .set_file_name(filename.clone())
-                                                    .save_file()
-                                            {
-                                                // Save file to disk
-                                                let _ = std::fs::write(path, data);
-                                            }
+                                            ui.vertical(|ui| {
+                                                // If it is image:
+                                                if Self::is_image_file(filename) {
+                                                    let cache_key = format!(
+                                                        "{}_{}",
+                                                        timestamp, filename
+                                                    );
+
+                                                    if let Some(texture) = self
+                                                        .get_or_load_image(
+                                                            ui.ctx(),
+                                                            &cache_key,
+                                                            data,
+                                                        )
+                                                    {
+                                                        let max_size =
+                                                            egui::vec2(300.0, 300.0);
+                                                        ui.add(
+                                                            egui::Image::from_texture(
+                                                                &texture,
+                                                            )
+                                                            .max_size(max_size)
+                                                            .corner_radius(5.0),
+                                                        );
+                                                    }
+                                                }
+
+                                                // Anyway, show download button under (or instead) image
+                                                if ui
+                                                    .button(format!(
+                                                        "💾 Download {}",
+                                                        filename
+                                                    ))
+                                                    .clicked()
+                                                    && let Some(path) =
+                                                        rfd::FileDialog::new()
+                                                            .set_file_name(filename)
+                                                            .save_file()
+                                                {
+                                                    let _ = std::fs::write(path, data);
+                                                }
+                                            });
                                         },
                                     }
                                 });
@@ -383,5 +409,58 @@ impl ChatPage {
                 unreachable!("ServerMessage::Error");
             },
         }
+    }
+
+    /// Helper function to check if file is image by its extension
+    fn is_image_file(filename: &str) -> bool {
+        const EXTENSIONS: [&str; 5] = [".png", ".jpg", ".jpeg", ".gif", ".webp"];
+
+        let filename = filename.to_lowercase();
+
+        for extension in EXTENSIONS.iter() {
+            if filename.ends_with(extension) {
+                return true;
+            }
+        }
+
+        false
+    }
+
+    // Helper function to get texture for image file, or load it if it's not in cache
+    fn get_or_load_image(
+        &self, ctx: &egui::Context, cache_key: &str, data: &[u8],
+    ) -> Option<TextureHandle> {
+        let mut cache = self.texture_cache.borrow_mut();
+
+        if !cache.contains_key(cache_key) {
+            // Decoding bytes with image lib
+            if let Ok(img) = image::load_from_memory(data) {
+                let size = [img.width() as _, img.height() as _];
+                let image_buffer = img.to_rgba8();
+                let pixels = image_buffer.as_flat_samples();
+
+                let color_image =
+                    ColorImage::from_rgba_unmultiplied(size, pixels.as_slice());
+
+                let handle = ctx.load_texture(cache_key, color_image, Default::default());
+                cache.insert(cache_key.to_string(), handle);
+            }
+        }
+        cache.get(cache_key).cloned()
+    }
+
+    // Format text, markdown (only bold for now)
+    fn render_formatted_text(&self, ui: &mut egui::Ui, text: &str) {
+        ui.horizontal_wrapped(|ui| {
+            let mut is_bold = false;
+            for part in text.split("**") {
+                if is_bold {
+                    ui.label(egui::RichText::new(part).strong());
+                } else {
+                    ui.label(part);
+                }
+                is_bold = !is_bold;
+            }
+        });
     }
 }

@@ -6,7 +6,6 @@ use crate::ui::pages::chat::ChatPage;
 use crate::ui::pages::connecting::ConnectingPage;
 use protocol::{ClientMessage, ServerMessage};
 
-#[derive(Debug)]
 pub struct Workspace {
     page_auth: AuthPage,
     page_connecting: ConnectingPage,
