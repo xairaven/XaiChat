@@ -1,0 +1,19 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO messages (sender_id, target_user_id, target_group_id, is_broadcast, content_payload, created_at) VALUES ($1, $2, $3, $4, $5, $6)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8",
+        "Int8",
+        "Bool",
+        "Bytea",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "de6ccfaa6c8c71fe2ff0a4a17af571d1d1025cc4aa77a312064bf79dceb7506b"
+}

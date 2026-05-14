@@ -1,0 +1,53 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT m.sender_id, m.target_user_id, m.target_group_id, m.is_broadcast, m.content_payload, m.created_at\n            FROM messages m\n            LEFT JOIN group_members gm ON m.target_group_id = gm.group_id\n            WHERE m.created_at > $1\n              AND (m.target_user_id = $2\n                   OR m.is_broadcast = true\n                   OR m.sender_id = $2\n                   OR gm.user_id = $2)\n            ORDER BY m.created_at ASC\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "sender_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "target_user_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 2,
+        "name": "target_group_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 3,
+        "name": "is_broadcast",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 4,
+        "name": "content_payload",
+        "type_info": "Bytea"
+      },
+      {
+        "ordinal": 5,
+        "name": "created_at",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      true,
+      true,
+      true,
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "5245e2332a01e19d8d680a82b406bfe52bac5f6307f818ae24107ccebfb439ca"
+}

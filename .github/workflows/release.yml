@@ -33,6 +33,8 @@ jobs:
         run: cargo build --package client --release
 
       - name: Build Server
+        env:
+          SQLX_OFFLINE: "true"
         run: cargo build --package server --release
 
       - name: Archive files on Ubuntu
