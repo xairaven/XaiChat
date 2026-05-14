@@ -1,6 +1,6 @@
 [package]
 name = "server"
-version = "0.0.1"
+version = "1.0.0"
 authors = ["Oleksandr Kovalov <oleksandr.kovalov.work@gmail.com>"]
 
 edition = "2024"
